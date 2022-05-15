@@ -1,0 +1,463 @@
+---
+title: "Final"
+author: "Keaton Spiller"
+date: "11/30/2021"
+output: html_document
+---
+
+```{r setup, echo = FALSE, message = FALSE, warning = FALSE}
+library(bookdown)# load the libraries
+library(dplyr)
+library(broom)
+library(faraway)
+library(ellipse)
+library(rstudioapi)
+library(lmtest)
+library(simex)
+library(ggplot2)
+library(lars)
+library(MASS)
+library(pls)
+library(olsrr)
+library(leaps)
+library(matlib)
+library(olsrr)
+library(ggplot2)
+library(lattice)
+```
+I broke this project into 6 parts,
+
+(1. Setup, 2. Correct Predictors, 3. Correct Observations, 4. Diagnostics, 5. Transformation, 6. Prediction.)
+
+Answers to the midterm questions for the final at the end.
+
+1. Initial Setup
+----------------
+
+```{r}
+glass <- read.table("final.txt", header = TRUE)
+```
+
+```{r}
+head(glass)
+tail(glass)
+```
+
+Loading in the data I can see that some predictors need scaling as some values are thousands and others are decimals
+
+```{r warning=FALSE}
+lm <- lm(density ~ ., data=glass)
+lms <- summary(lm)
+par(mfrow = c(2,2))
+plot(lm)
+```
+Given the initial data without any filtering 
+
+The data doesn't show a constant variance as the data is clumped up & going in a distinct pattern from Fitted Values vs Residuals
+
+The data doesn't look normalized as the qq plot large tails at the ends of the data
+
+Since is very large it makes sense that the influential points don't have as large an impact, and the data tends to group up and cluster
+
+2. Correct Predictors
+--------------------
+
+{6 Problems with the Predictors}
+
+### 6.3 Collinearity
+
+Using Vif to diagnose the collinearity of what predictors are highly correlated
+
+```{r warning=FALSE}
+significant_x<- vif(lm)
+d <- data.frame(significant_x)
+head(significant_x, n = 5)
+tail(significant_x, n = 5)
+```
+```{r}
+min(significant_x)
+max(significant_x)
+```
+
+The smallest collinearity is 3.939707e-09 and the largest is 1.305609e+35
+
+Removing Large collinear values
+```{r}
+x<- significant_x[significant_x<1]
+glass_reduced=glass[, (append("density", rownames(data.frame(x)))) ]
+glass_reduced
+```
+Comparing with analysis of variance (ANOVA) how much better the model is after removing predictors with high collinearity
+
+known as homoscedasticity
+
+```{r}
+lm_reduced<- lm(density ~ ., data=glass_reduced)
+dim(glass_reduced)
+a <- anova(lm, lm_reduced)
+a$F
+a$`Pr(>F)`
+```
+The larger the F the better the fit of the reduced model, using Predictors < 1 gave me the largest F value 984.8142
+
+yet the same Pr(>F) 2.154454e-255
+
+```{r}
+summary(lm)
+summary(lm_reduced)
+```
+Although my Goodness of Fit (Multiple R-squared: R^2) went down from 0.9997 to 0.7031,
+I removed predictors that are too dependent, 
+from class we analysed hip center data and how Large covariance in Foot and height can give us inaccurate results
+
+
+### 6.2 Changes of Scale
+
+how do Deal with the observations and the different scales
+
+Do I scale before performing a PCA or PLS function?
+Yes PCA/PLS find deviations in lambda, which for every lambda in each row give us how much that row affects the entire data. and we want those deviations on the same scale or the (thousands vs decimals values) on different scales will give gibberish. binary data ( 0's and 1's ) will always be on a decimal scale and that doesn't mean the decimal values are any less important than a glass property like price or quantities of former, flux or stabilizer which could hold larger values but could only really be compared to binary values to see if the glass will hold a better density if the scales are the same.
+
+```{r}
+glass_reduced
+```
+All of these Predictors are on a different scale than the rest of the data {X203, X206, X218, X440, X443, X464}
+```{r}
+scglass <- data.frame(scale(glass_reduced))
+lm_scaled <- lm(density ~ ., data = scglass) # scale() is subtracting the mean and dividing by the sd
+scglass
+# Or | If I were to hand scale the data
+# lm_scaled <- lm(density ~ X115 + X118 + X121 + X127 + X130 + X193 + X196 + X196 + X202 + I(X203/100) + X205 + I(X206/100) + X206 + X208 + X211 + I(X218/100) + X325 + X328 + X433 + I(X440/40) + I(X443/20) + I(X464/10), data = glass_reduced)
+summary(lm_reduced)
+summary(lm_scaled)
+```
+I ended up using the scale() function instead of hand scaling the data, I wanted to make sure when I ran PCA that I was correctly finding weights of each row on a relevant axis. 
+
+Everything set to the same standard deviation
+
+The scaled model has the same R^2 goodness of fit, but the intercept went down by half.
+
+{9 Model Selection}
+
+### 9.3 Criterion-Based Procedures
+
+```{r}
+further_simplified_model <- ols_step_forward_p(lm_scaled,details = F)
+further_simplified_x <- further_simplified_model$predictors
+
+glass_reduced_Further=glass_reduced[, append("density", further_simplified_x) ]
+lm_further_simplified<- lm(density ~ ., data=glass_reduced_Further)
+
+dim(glass_reduced)
+dim(glass_reduced_Further)
+# Checking for better fit of the simplified model using Analysis of Variance (ANOVA)
+# anova(lm, lm_reduced, lm_scaled, lm_further_simplified)
+# anova(lm_scaled, lm_further_simplified)
+summary(lm_scaled)
+lmfs <- (summary(lm_further_simplified))
+```
+
+4 further observations were removed when running the ols_step_forward_p method from the reduced model
+474 rows 21 columns to 474 rows and columns
+I could have used other AIC or step methods but they should all eventually get the same answer but with different approaches
+
+The F statistics went from 53.64 to 61.95 which is higher with only a slightly smaller R^2, which is okay because simplifying the large data is very important for being able to understand what conclusions to make
+
+3. Correct Observations
+-----------------------
+
+{10 Shrinkage Method}
+
+### 10.1 PCA
+
+```{r}
+set.seed(123)
+dim(glass_reduced_Further)
+```
+We need to deal with those 474 rows
+```{r}
+plot(density ~ ., glass_reduced_Further)
+```
+
+```{r}
+glass_reduced_Further
+```
+
+### 10.2 Partial Least Square
+
+using PCR we can use eigenvalues to do this
+```{r}
+# Performs a principal components analysis
+# Also scales further even though I scaled the x variables to the standard deviation when correcting the predictors
+prcomp <- prcomp(glass_reduced_Further, scale=TRUE)
+(sum_prglass <- summary(prcomp))
+```
+Taking 95% confidence with 0.05 significance for components takes all components up to PC7
+
+```{r}
+rot <- prcomp$rot
+head(rot)
+```
+```{r}
+
+# Creating a linear model that takes the 7 pcr components and applies each lambda to each row, Y= ( X*Λ )B + epsilon, giving us the rows that hold 95% of the data
+
+pcrdata <- cbind(glass_reduced_Further$density, prcomp$x)
+pcrdata <- as.data.frame(pcrdata)
+pcrdata
+
+pclm <- lm(V1 ~ PC1 + PC2 + PC3 + PC4 + PC5 + PC6 + PC7, data = pcrdata)
+summary(pclm)
+```
+
+
+```{r}
+# principal component regression (PCR), with a formula interface. Cross-validation can be used. Prediction, model extraction, plot, print and summary methods exist.
+pcrmod <- pcr(density ~ ., data=glass_reduced_Further, ncomp=7) 
+dim(pcrmod$projection)
+summary(pcrmod)
+```
+Why PCR over Plsr?
+
+Well the pls model deals with X and Y & the PCR deals with only X
+
+However dealing with X & Y simultaneously in my opinion isn't the best approach
+
+The initial data is  474 rows x 498 columns and is too large to go straight to Y
+
+Instead I deal with X, and Y separately
+```{r}
+#Function to estimate the mean squared error of prediction (MSEP)
+pcrmse <- RMSEP(pcrmod, newdata=glass_reduced_Further)
+# which.min(pcrmse$val)
+
+plot(pcrmse,main="")
+plot(pcrmod$coef[-1],xlab="Frequency",ylab="Coefficient",type="l")
+```
+
+4. Diagnostics
+---------------
+
+```{r}
+plot(V1 ~ ., pcrdata)
+```
+
+After filtering the data we need to check the variance and normality
+```{r}
+par(mfrow = c(2,2))
+qqnorm(residuals(pclm),xlab="Residuals", main="")
+qqline(residuals(pclm))
+hist(residuals(pclm))
+
+plot(fitted(pclm),residuals(pclm), xlab='Fitted', ylab='Residuals')
+abline(h=0)
+
+plot(fitted(pclm),sqrt(abs(residuals(pclm))), xlab='Fitted', ylab=expression(sqrt(hat(epsilon))))
+abline(h=0)
+
+```
+The data still has a large tail and non constant variance
+
+
+```{r}
+par(mfrow = c(1,1))
+termplot(pclm, partial.resid=TRUE, terms=NULL)
+```
+{Section 6.1.3 Correlation Errors}
+```{r}
+# test for temporal data 2 ways
+
+#1. 1 off test pg 82 textbook
+n <- length(residuals(pclm))
+plot(tail(residuals(pclm),n-1) ~ head(residuals(pclm), n-1), xlab= expression(hat(epsilon)[i]), ylab=expression(hat(epsilon)[i+1]))
+abline(h=0,v=0,col=grey(0.75))
+
+```
+```{r message=FALSE, warning=FALSE}
+# Correlation could be shown another way
+
+#2. Durbin-Watson test
+
+dwtest(V1 ~ ., data= pcrdata)
+```
+
+{Section 6.2.2 Outliers}
+
+```{r}
+# using studentized residuals
+stud <- rstudent(pclm)
+stud[which.max(abs(stud))]
+
+```
+{Section 6.2.3 Influential Observations}
+
+```{r}
+# Cooks Statistics
+prop <- row.names(pcrdata)
+cook <- cooks.distance(pclm)
+halfnorm(cook,labs=prop,ylab = 'Cooks Distance')
+```
+Without the Cooks ( Removing the influential point )
+```{r}
+lmodi <- lm(V1 ~ PC1 + PC2 + PC3 + PC4 + PC5 + PC6 + PC7, subset= (cook < max(cook)), data=pcrdata)
+summary(pclm)
+summary(lmodi)
+```
+The removed Influential Observations has a slightly better F statistic 1.669e+09 to 1.73e+09 but not high enough for be to justify removing 
+
+{Section 6.2.1 Leverage}
+
+```{r}
+# using 2p/n half normal threshold
+hatv <- hatvalues(pclm)
+prop <- row.names(pcrdata)
+halfnorm(hatv,lab=prop,ylab="Leverages")
+```
+
+Partial residual plot to find the structure
+
+```{r}
+par(mfrow = c(1,1))
+termplot(pclm, partial.resid=TRUE, terms=NULL)
+```
+The structure of this being so closely aligned to the plot seems too good to be true.
+I don't think the scaling was harmfull as this needs the scale to be the same to see any patterns hidden in the data.
+
+```{r message=FALSE, warning=FALSE}
+transform_lm_Nested <- function(transformations, y) {
+  function.names <- transformations
+  l <- length(transformations)
+  original_lm <- lm(y ~ ., data= glass)
+  par(mfrow = c(1,2))
+  plot(fitted(original_lm),residuals(original_lm),xlab="Fitted",ylab="Original_Residuals",main = "Transformed")
+    abline(h=0)
+    qqnorm(residuals(original_lm),xlab='Original_Residuals', main="")
+    qqline(residuals(original_lm))
+    
+  for (i in 1:l) {
+    name <- function.names[i]
+    fun <- get(name)
+    new_lm <- lm(fun(y) ~ ., data= glass)
+    par(mfrow = c(1,2))
+    plot(fitted(new_lm),residuals(new_lm),xlab="Fitted",ylab=paste(name,"_Residuals"),main = "Transformed")
+    abline(h=0)
+    qqnorm(residuals(new_lm),xlab=paste(name,"_Residuals"), main="")
+    qqline(residuals(new_lm))
+    
+    for (j in 1:l) {
+      name2 <- function.names[j]
+      fun2 <- get(name2)
+      if(any(is.infinite(fun(fun2(y)))))
+      {
+        break
+      }
+      else
+      {
+      new_lm2 <- lm(fun(fun2(y)) ~ ., na.action=na.omit, data= glass)
+      par(mfrow = c(1,2))
+      plot(fitted(new_lm2),residuals(new_lm2),xlab="Fitted",ylab=paste(name,name2,"_Residuals"),main = "Transformed")
+      abline(h=0)
+      qqnorm(residuals(new_lm2),xlab=paste(name,name2,"_Residuals"), main="")
+      qqline(residuals(new_lm2))
+      }
+      
+    }
+  }
+}
+y <- pcrdata$V1
+transformations <-  c('sqrt', 'abs', 'log', 'exp', 'factorial','sin','cos','tan','sinpi','cospi','tanpi','atan')
+transform_lm_Nested(transformations, y)
+```
+
+From the nested transformation function above
+
+I can't find a simple transformation that would be easy to explain the data and improve the constant variance assumption/normality.
+
+
+```{r warning=FALSE}
+lm_no_siplification_pred <- predict(lm, interval = "prediction")
+head(lm_no_siplification_pred)
+```
+Checking confidence interval if we predicted before scaling/other reductions
+```{r warning=FALSE}
+lm_reduced_pred <- predict(lm_reduced, interval = "prediction")
+head(lm_reduced_pred)
+```
+
+Without scaling the data we see data hovers ~ 2 to 3
+
+Checking confidence interval if we predicted before
+```{r warning=FALSE}
+lm_reduced_scaled_pred <- predict(lm_scaled, interval = "prediction")
+head(lm_reduced_scaled_pred)
+```
+
+Checking confidence interval if we predicted before taking the principle components
+```{r warning=FALSE}
+lm_reduced_further_pred <- predict(lm_further_simplified, interval = "prediction")
+head(lm_reduced_further_pred)
+```
+Without the pcr the reduced data hovers ~ 2 to 3
+
+
+Checking with pls model for curiosity
+```{r}
+pcr_pred <- predict(pcrmod, ncomp=7)
+head(pcr_pred)
+```
+Checking the pls model bounces back and forth ~ 1 -> 3
+
+Checking the predictions with my most accurate linear model
+```{r warning=FALSE}
+pclm_pred <- predict(pclm, interval = "prediction")
+head(pclm_pred)
+```
+All the predictions hover around 2 to 3, it seems filtering didn't change the predictions very much
+
+
+Additionally, I could have used
+
+10.3 Ridge Regression or
+
+10.4 LASSO
+
+unfortunately I spent most of my time filtering the data and didn't have as much time for diagnostics
+
+
+{Answering Questions from the midterm for the Final}
+
+(a) If you fit a multiple linear model, analyze your result using what we have dis-
+cussed.
+
+From the results I can't make any valid predictions. 
+
+After filtering and diagnosing the data, there are no transformations that clearly show a constant variance and normality.
+
+And without knowing what the X values are there could be deeper relationships invalidating my model.
+
+(b) Doing real experiment is very expensive for all of the properties. Assuming
+they are of equally likely expense. If I can only afford one experiment, which
+property do you suggest me do? Give me your reason.
+
+To choose the best experiment I would choose between the most significant p value of the lm_reduced_further model.
+
+The two to choose from are either X203 or X464 which both have p values < 2e-16.
+
+In order to choose between the two I would remove both of them from the linear model and see which one affected the model more significantly
+
+```{r}
+lm_further_simplified2<- lm_further_simplified
+lm_further_simplified3<- lm_further_simplified
+lm_further_simplified2 <- update(lm_further_simplified2, . ~ . - X203)
+lm_further_simplified3 <- update(lm_further_simplified3, . ~ . - X464)
+summary(lm_further_simplified2)
+summary(lm_further_simplified3)
+```
+Since X464 being removed made r^2, F statistic and RSE worse than X203 being removed 
+
+X464 is the experiment I would use if I was given only 1 experiment. 
+
+(c) What other ideas do you have from this data set?
+
+I believe there are some relationships in how the data was collected that was created when the data was collected that I can't account for and will always throw off any model I create unless I can guess the type of error and account for it accordingly, but I couldn't find any way to reasonable guess.
+

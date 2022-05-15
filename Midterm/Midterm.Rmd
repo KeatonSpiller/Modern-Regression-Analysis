@@ -1,0 +1,394 @@
+---
+title: "Midterm"
+author: "Keaton Spiller"
+date: "11/1/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(faraway)
+library(nlme)
+require(lmtest)
+```
+```{r}
+glass <- read.table("p3.txt", header = TRUE)
+head(glass)
+```
+
+```{r}
+lm<- lm(density ~ Prop1 + Prop2 + Prop3, data= glass)
+(lms <- summary(lm))
+```
+{Estimation Section 2}
+
+{Goodness of Fit Section 2.9}
+```{r}
+#R^2 Goodness of Fit
+(cor(lm$fitted.values, glass$density))**2
+```
+```{r}
+fstats <- lms$fstatistic
+df <- lms$df
+```
+
+```{r}
+confint(lm)
+```
+
+\bold(Diagnostics {Section 6.1}:)
+
+{Section 6.1.1} Check for constant variance
+
+Plot Epsilon hat vs y hat
+$$ \hat{\epsilon}\:vs\: \hat{y}$$
+```{r}
+# The original comparison shows a "megaphone shape" with non constant variance
+plot(fitted(lm),residuals(lm), xlab='Fitted', ylab='Residuals')
+abline(h=0)
+```
+Looks slightly like a megaphone
+
+```{r}
+# However after Doubling the resolution
+plot(fitted(lm),sqrt(abs(residuals(lm))), xlab='Fitted', ylab=expression(sqrt(hat(epsilon))))
+abline(h=0)
+```
+
+Doubling the resolution with the square root absolute value of the residuals clearly shows a uniformly random distribution. This means we do have constant variance (homoscedasticity)
+{Normality Section 6.1.2}
+Checking for Normalized data
+```{r}
+par(mfrow = c(1,1))
+qqnorm(residuals(lm),xlab="Residuals", main="")
+qqline(residuals(lm))
+hist(residuals(lm))
+
+```
+This shows a Heavy Tail and non normalized distribution
+
+```{r}
+# Shapiro-Wilk test for normality
+shapiro.test(residuals(lm))
+```
+0.0001879 is a small P value therefore we reject that this is normalized data
+
+What if We were to swap the rows and find out if the order of the rows was affecting normality?
+```{r}
+swp_rows <- function(d) {
+  l <- length(glass[,1])
+  s <- sample(1:l, l, replace=FALSE)
+  for (i in 1:l){
+    swap <- d[i,]
+    nxt= d[s[i],]
+    d[i,] <-  nxt
+    d[s[i],] <- swap
+  
+  }
+  return (d);
+}
+```
+
+```{r}
+glass_swapped_rows <- swp_rows(glass)
+swplm <-  lm(density ~ Prop1 + Prop2 + Prop3, data= glass_swapped_rows)
+
+# plot(fitted(swplm),residuals(swplm), xlab='Fitted', ylab='Residuals') # Doesnt change the variance
+# abline(h=0)
+par(mfrow = c(1,1))
+qqnorm(residuals(swplm),xlab="Residuals", main="")
+qqline(residuals(swplm))
+hist(residuals(swplm))
+
+```
+This doesn't change the normality 
+
+Therefore in order to deal with non normalized data we could use Generalized Least squares(GLS)
+
+{Problems with the Errors Section 8}
+{Generalized Least squares(GLS) Section 8.1}
+
+The type of big sigma we need to use depends on the type of dependent relationship of the data,
+(ie Time series/ Block Data / Geospatial Data)
+```{r}
+require(nlme)
+bigsigma = cor(residuals(lm)[-1],residuals(lm)[-length(residuals(lm))])
+# bigsigma
+
+# Trying the different standard correlation classes
+# corAR1 corARMA corCAR1 corCompSymm corExp corGaus corLin corRatio corSpher corSymm
+
+# memory.limit()
+# memory.limit(size=56000)
+
+# glmod <- gls(density ~ Prop1 + Prop2 + Prop3,
+# data=glass,correlation=corSymm(form = ~1))
+
+# summary(glmod)
+# qqnorm(residuals(glmod),xlab="Residuals", main="")
+# qqline(residuals(glmod))
+```
+This is commented out because the data is too big and the glm runs into errors 
+running the generalized corSymm(form = ~1) correlation
+
+I tried to fix the memory but the data set we are given is too large for this computation
+
+{Section 6.1.3 Correlation Errors}
+```{r}
+# test for temporal data 2 ways
+
+#1. 1 off test pg 82 textbook
+n <- length(residuals(lm))
+plot(tail(residuals(lm),n-1) ~ head(residuals(lm), n-1), xlab= expression(hat(epsilon)[i]), ylab=expression(hat(epsilon)[i+1]))
+abline(h=0,v=0,col=grey(0.75))
+
+```
+
+This shows a linear relationship between the errors and the next errors.
+
+This is a positive correlation indicating the data is affected by correlation errors
+```{r}
+# Correlation could be shown another way
+
+#2. Durbin-Watson test
+
+dwtest(density ~ Prop1 + Prop2 + Prop3, data= glass)
+```
+
+Since P is small, this 2nd method also shows autocorrelation
+the data is not affected by Temporal correlation error because this doesn't relate to time.
+Therefore this is either spatial or block correlated
+
+
+{Section 6.2.2 Outliers}
+
+```{r}
+# using studentized residuals
+stud <- rstudent(lm)
+stud[which.max(abs(stud))]
+## Bonferroni critical value? 1 -n alpha
+
+```
+{Section 6.2.3 Influential Observations}
+
+```{r}
+# Cooks Statistics
+prop <- row.names(glass)
+cook <- cooks.distance(lm)
+halfnorm(cook,labs=prop,ylab = 'Cooks Distance')
+```
+
+Without the Cooks ( Removing the influential point )
+```{r}
+lmodi <- lm(density ~ Prop1 + Prop2 + Prop3, subset= (cook < max(cook)), data=glass)
+lmodi
+# We don't know if removing this is better
+# anova(lm,lmodi) cannot use anova different models
+lm
+```
+
+{Section 6.2.1 Leverage}
+
+```{r}
+# using 2p/n half normal threshold
+hatv <- hatvalues(lm)
+prop <- row.names(glass)
+halfnorm(hatv,lab=prop,ylab="Leverages")
+```
+Checking the linear model with the same scale
+Quoted as "testing the extreme of the observations, not normality or constant variance of errors"
+```{r}
+qqnorm(rstandard(lm))
+abline(0,1)
+```
+{Section 5.3}
+
+Finding the structure with delta and gamma
+
+```{r}
+# In order to check the structure find delta and gamma plot against, and also plot delta vs Xi (new)
+d1 <- residuals(lm(density ~  Prop2 + Prop3,data=glass))
+m1 <- residuals(lm(Prop1 ~ Prop2 + Prop3,data=glass))
+d2 <- residuals(lm(density ~  Prop1 +Prop3,data=glass))
+m2 <- residuals(lm(Prop2 ~ Prop1 + Prop3,data=glass))
+d3 <- residuals(lm(density ~  Prop1+ Prop2,data=glass))
+m3 <- residuals(lm(Prop3 ~ Prop1 + Prop2,data=glass))
+par(mfrow = c(1,3))
+plot(m1,d1,xlab="Prop1",ylab="density residuals")
+abline(0,coef(lm)['Prop1'])
+plot(m2,d2,xlab="Prop2",ylab="density residuals")
+abline(0,coef(lm)['Prop2'])
+plot(m3,d3,xlab="Prop3",ylab="density residuals")
+abline(0,coef(lm)['Prop3'])
+
+
+```
+
+Instead and easier way is to use the Partial residual plot to find the structure
+
+```{r}
+par(mfrow = c(1,3))
+termplot(lm, partial.resid=TRUE, terms=NULL)
+```
+
+{Collinearity Section 6.3}
+Use variance inflation factor (VIF)
+to help determine collinearity
+
+```{r}
+x <- model.matrix(lm)[,-1]
+
+# The background behind VIF
+
+# e <- eigen(t(x) %*% x)
+# e$val
+# sqrt(e$val[1]/e$val)
+# 1/(1-summary(lm(x[,1] ~ x[,-1]))$r.squared)
+
+vif(x)
+```
+Prop1 and Prop 2 are very similar but the values are very low suggesting small collinearity
+
+Perhaps try transforming y to a new y′=h(y) such that the new model y′=Xβ+ϵ has constant variance / Normally distributed
+
+Here is a function that shows the variance and normality of many different function transformations
+
+```{r}
+transform_lm <- function(transformations, y) {
+  
+  function.names <- transformations
+  l <- length(transformations)
+  original_lm <- lm(y ~ Prop1 + Prop2 + Prop3, data= glass)
+  par(mfrow = c(1,2))
+  plot(fitted(original_lm),residuals(original_lm),xlab="Fitted",ylab="Original_Residuals",main = "Transformed")
+    abline(h=0)
+    qqnorm(residuals(original_lm),xlab='Original_Residuals', main="")
+    qqline(residuals(original_lm))
+    
+  for (i in 1:l) {
+    name <- function.names[i]
+    fun <- get(name)
+    new_lm <- lm(fun(y) ~ Prop1 + Prop2 + Prop3, data= glass)
+    par(mfrow = c(1,2))
+    plot(fitted(new_lm),residuals(new_lm),xlab="Fitted",ylab=paste(name,"_Residuals"),main = "Transformed")
+    abline(h=0)
+    qqnorm(residuals(new_lm),xlab=paste(name,"_Residuals"), main="")
+    qqline(residuals(new_lm))
+  }
+}
+y <- glass$density
+transformations <-  c('sqrt', 'abs', 'log', 'exp', 'factorial','sin','cos','tan','sinpi','cospi','tanpi','atan')
+transform_lm(transformations, y)
+```
+This is the same transform_lm as above but trying transformations of two functions against each other
+
+```{r warning=FALSE}
+transform_lm_Nested <- function(transformations, y) {
+  function.names <- transformations
+  l <- length(transformations)
+  original_lm <- lm(y ~ Prop1 + Prop2 + Prop3, data= glass)
+  par(mfrow = c(1,2))
+  plot(fitted(original_lm),residuals(original_lm),xlab="Fitted",ylab="Original_Residuals",main = "Transformed")
+    abline(h=0)
+    qqnorm(residuals(original_lm),xlab='Original_Residuals', main="")
+    qqline(residuals(original_lm))
+    
+  for (i in 1:l) {
+    name <- function.names[i]
+    fun <- get(name)
+    new_lm <- lm(fun(y) ~ Prop1 + Prop2 + Prop3, data= glass)
+    par(mfrow = c(1,2))
+    plot(fitted(new_lm),residuals(new_lm),xlab="Fitted",ylab=paste(name,"_Residuals"),main = "Transformed")
+    abline(h=0)
+    qqnorm(residuals(new_lm),xlab=paste(name,"_Residuals"), main="")
+    qqline(residuals(new_lm))
+    
+    for (j in 1:l) {
+      name2 <- function.names[j]
+      fun2 <- get(name2)
+      if(any(is.infinite(fun(fun2(y)))))
+      {
+        break
+      }
+      else
+      {
+      new_lm2 <- lm(fun(fun2(y)) ~ Prop1 + Prop2 + Prop3, na.action=na.omit, data= glass)
+      par(mfrow = c(1,2))
+      plot(fitted(new_lm2),residuals(new_lm2),xlab="Fitted",ylab=paste(name,name2,"_Residuals"),main = "Transformed")
+      abline(h=0)
+      qqnorm(residuals(new_lm2),xlab=paste(name,name2,"_Residuals"), main="")
+      qqline(residuals(new_lm2))
+      }
+      
+    }
+  }
+}
+y <- glass$density
+transformations <-  c('sqrt', 'abs', 'log', 'exp', 'factorial','sin','cos','tan','sinpi','cospi','tanpi','atan')
+transform_lm_Nested(transformations, y)
+```
+
+From the functions that were able to do transformations of each other
+In terms of variance and normality,
+sqrt of cospi looks (slightly better)
+
+```{r,warning=FALSE, error=FALSE, message=FALSE}
+  tranlm <- lm(sqrt(cospi(density)) ~ Prop1 + Prop2 + Prop3, data= glass)
+  par(mfrow = c(1,2))
+  plot(fitted(tranlm),residuals(tranlm),xlab="Fitted",ylab="Residuals",main = "Transformed")
+    abline(h=0)
+    qqnorm(residuals(tranlm),xlab='Residuals', main="")
+    qqline(residuals(tranlm))
+```
+
+Although this function transformation makes a better fit to the data, since this function is not a common function it may be more complicated to understand sqrt of cospi ( This is done with Generalized Linear model in chapter 8 ) briefly learned today
+
+```{r}
+# Find errors in the x1
+par(mfrow = c(1,3))
+plot(glass$Prop1,glass$density, xlab='Prop1', ylab='y')
+abline(h=0)
+# Find errors in the x2
+plot(glass$Prop2,glass$density, xlab='Prop2', ylab='y')
+# Find errors in the x3
+plot(glass$Prop3,glass$density, xlab='Prop3', ylab='y')
+abline(h=0)
+```
+
+From this graph we can see that there is linearity in the Prop 2 variable
+
+If I wanted account for exponential growth transform the x2 variable and anova to compare if the transformation of X fit the data better
+```{r}
+tlm<- lm(density ~ Prop1 + I(log(Prop2)) + Prop3, data= glass)
+tlms <- summary(lm)
+anova(lm,tlm)
+```
+
+Could Use Glm to transform the y value or x value
+if poisson assuming exponential Family
+```{r,warning=FALSE, error=FALSE, message=FALSE}
+fit <- glm(density ~ Prop1+Prop2+Prop3, data=glass, family=poisson())
+summary(fit)
+```
+Further understanding on how to deal with the response (Variance) and predictors(xi) taught later in this quarter or in other classes.
+
+
+Questions
+
+(a) If you fit a multiple linear model, analyze your result using what we have dis-
+cussed.
+
+  The y value would have to be transformed to make the data normalized.
+  The Prop2 predictor would have to be transformed so it is doesn't affect all the other results.
+
+(b) Doing real experiment is very expensive for all of three properties. Assuming
+they are of equally likely expense. If I can only afford one experiment, which
+property do you suggest me do? Give me your reason.
+
+  I would suggest Prop 3. It has a a more spread out structure in the Partial residual plot,
+  and is more uniformly random with a larger spread in the xi vs y plot.
+
+(c) What other ideas do you have from this data set?
+
+There has to be a way to clean up the nonlinear relationship of Prop 2 shown in the xi to y plot.
+Once this x value has been accounted for hopefully this could fix some underlying issues with our linear model.

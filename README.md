@@ -1,7 +1,8 @@
 # Modern-Regression-Analysis
 Modern-Regression-Analysis Midterm and Final
 
-* Using R Markdown
+* Requirements
+* R Markdown
 
 # Midterm & Final 
 * Both Using Glass Data

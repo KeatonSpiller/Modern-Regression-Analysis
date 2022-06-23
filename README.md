@@ -5,7 +5,7 @@ Modern-Regression-Analysis Midterm and Final
 * R Markdown
 
 # Midterm & Final 
-* Both Using Glass Data
+* Glass Data
 * p3.txt and final.txt
 
 1. Setup

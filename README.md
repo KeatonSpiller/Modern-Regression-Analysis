@@ -6,6 +6,7 @@ Modern-Regression-Analysis Midterm and Final
 
 # Midterm & Final 
 * Both Using Glass Data
+* p3.txt and final.txt
 
 1. Setup
 2. Correct Predictors
